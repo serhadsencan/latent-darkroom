@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      // Apply the theme before React mounts, otherwise a dark-theme user gets a
+      // white flash on first paint.
+      (function () {
+        try {
+          var stored = localStorage.getItem('ld:theme') || 'dark';
+          var resolved =
+            stored === 'system'
+              ? window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+              : stored;
+          document.documentElement.dataset.theme = resolved;
+        } catch (e) {
+          /* localStorage disabled — stay on the dark default */
+        }
+      })();
+    </script>
+    <link rel="icon" type="image/png" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/logo-mark.png" />
+    <title>latent darkroom</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,210 @@
+@import 'tailwindcss';
+@plugin 'daisyui';
+
+/*
+ * Two themes: darkroom and daylight. Named "dark"/"light" on purpose — `useTheme`
+ * writes those values straight onto <html data-theme>.
+ *
+ * Neutral greys plus a single amber accent. A photo app's chrome should have no
+ * colour of its own; colour is the photograph's job, chroma is only for accents.
+ */
+@plugin 'daisyui/theme' {
+  name: 'dark';
+  default: true;
+  prefersdark: true;
+  color-scheme: dark;
+
+  --color-base-100: oklch(0.145 0.005 285);
+  --color-base-200: oklch(0.185 0.005 285);
+  --color-base-300: oklch(0.245 0.005 285);
+  --color-base-content: oklch(0.93 0.003 285);
+
+  --color-primary: oklch(0.72 0.16 55);
+  --color-primary-content: oklch(0.16 0.02 55);
+  --color-secondary: oklch(0.62 0.08 245);
+  --color-secondary-content: oklch(0.97 0.01 245);
+  --color-accent: oklch(0.72 0.16 55);
+  --color-accent-content: oklch(0.16 0.02 55);
+  --color-neutral: oklch(0.245 0.005 285);
+  --color-neutral-content: oklch(0.93 0.003 285);
+
+  --color-info: oklch(0.68 0.09 240);
+  --color-info-content: oklch(0.15 0.02 240);
+  --color-success: oklch(0.68 0.13 155);
+  --color-success-content: oklch(0.15 0.02 155);
+  --color-warning: oklch(0.75 0.14 75);
+  --color-warning-content: oklch(0.16 0.02 75);
+  --color-error: oklch(0.63 0.19 25);
+  --color-error-content: oklch(0.97 0.01 25);
+
+  /* Soft corners distract next to a photo; edges stay close to square. */
+  --radius-selector: 0.25rem;
+  --radius-field: 0.25rem;
+  --radius-box: 0.375rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin 'daisyui/theme' {
+  name: 'light';
+  color-scheme: light;
+
+  --color-base-100: oklch(0.985 0.001 285);
+  --color-base-200: oklch(0.955 0.002 285);
+  --color-base-300: oklch(0.9 0.004 285);
+  --color-base-content: oklch(0.2 0.005 285);
+
+  --color-primary: oklch(0.55 0.15 45);
+  --color-primary-content: oklch(0.99 0.005 45);
+  --color-secondary: oklch(0.52 0.11 245);
+  --color-secondary-content: oklch(0.99 0.005 245);
+  --color-accent: oklch(0.55 0.15 45);
+  --color-accent-content: oklch(0.99 0.005 45);
+  --color-neutral: oklch(0.3 0.005 285);
+  --color-neutral-content: oklch(0.97 0.002 285);
+
+  --color-info: oklch(0.52 0.1 240);
+  --color-info-content: oklch(0.99 0.005 240);
+  --color-success: oklch(0.52 0.13 155);
+  --color-success-content: oklch(0.99 0.005 155);
+  --color-warning: oklch(0.62 0.14 75);
+  --color-warning-content: oklch(0.16 0.02 75);
+  --color-error: oklch(0.55 0.19 25);
+  --color-error-content: oklch(0.99 0.005 25);
+
+  --radius-selector: 0.25rem;
+  --radius-field: 0.25rem;
+  --radius-box: 0.375rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/*
+ * The map layer and pins are styled from plain CSS, so a couple of raw tokens are
+ * still needed. They derive from daisyUI's base colours so they follow the theme.
+ */
+:root {
+  --stage: oklch(0.145 0.005 285);
+  --pin-border: color-mix(in oklab, var(--color-base-content) 35%, transparent);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: ui-sans-serif, -apple-system, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Keep numeric metadata aligned */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Leaflet: theme adaptation and photo pins --- */
+
+.leaflet-container {
+  background: var(--color-base-100);
+  font-family: inherit;
+  /* Leaflet panes use z-index 200–800. Unless the container creates its own
+   * stacking context those values outrank the lightbox in the root context. */
+  isolation: isolate;
+}
+
+.leaflet-control-zoom a,
+.leaflet-control-attribution {
+  background: var(--color-base-200) !important;
+  color: var(--color-base-content) !important;
+  border-color: var(--color-base-300) !important;
+}
+.leaflet-control-zoom a:hover {
+  background: var(--color-base-300) !important;
+}
+.leaflet-control-attribution a {
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent) !important;
+}
+
+/* WARNING: if a .ld-* rule here matches Leaflet's own specificity, Leaflet wins —
+ * MapPage is lazy-loaded, so leaflet.css is injected AFTER index.css. That is why
+ * these selectors are deliberately one level longer than they need to be. */
+.leaflet-container .leaflet-marker-pane .ld-pin img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid var(--pin-border);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.6);
+  transition: transform 120ms ease;
+}
+.leaflet-container .leaflet-marker-pane .ld-pin:hover img {
+  transform: scale(1.15);
+  border-color: var(--color-primary);
+}
+
+/* The border encodes the location's source: solid = EXIF, blue = manual, dashed = interpolated. */
+.leaflet-container .leaflet-marker-pane .ld-pin--manual img {
+  border-color: var(--color-secondary);
+  border-width: 2px;
+}
+.leaflet-container .leaflet-marker-pane .ld-pin--interpolated img {
+  border-style: dashed;
+  border-color: var(--color-secondary);
+  border-width: 2px;
+  opacity: 0.85;
+}
+
+.leaflet-marker-pane .ld-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-primary) 28%, var(--color-base-100));
+  border: 1px solid var(--color-primary);
+  color: var(--color-base-content);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.35);
+}
+
+/* Assign mode: the cursor is set via the wrapper so the map div's class list is
+ * never touched (Leaflet writes its own classes there). */
+.ld-assigning .leaflet-container {
+  cursor: crosshair;
+}
+
+.ld-pick span {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 35%, transparent);
+  box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-primary) 12%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-base-300);
+  border-radius: 999px;
+  border: 2px solid var(--color-base-100);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--color-base-content) 30%, var(--color-base-300));
+}
