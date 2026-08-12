@@ -1,9 +1,10 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createReadStream } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import { isUnderRoots, photoRoots } from './config.ts';
 import { db, getMeta, type PhotoRow } from './db.ts';
-import { searchPlaces } from './geocode.ts';
+import { resolvePastedLocation, searchPlaces } from './geocode.ts';
 import { interpolateMissingLocations } from './geo.ts';
 import { scanLibrary, scanState } from './indexer.ts';
 import { ensureThumb, nearestSize, readDecodable } from './thumbs.ts';
@@ -295,6 +296,224 @@ export function registerRoutes(app: FastifyInstance): void {
     },
   );
 
+  /** Groups, most recently touched first. */
+  app.get('/api/groups', async () => {
+    const groups = db
+      .prepare(
+        `SELECT g.id, g.name, g.note, g.created_at, g.updated_at,
+                COUNT(i.photo_id) AS count,
+                (SELECT photo_id FROM group_items WHERE group_id = g.id ORDER BY added_at DESC LIMIT 1) AS cover
+         FROM groups g
+         LEFT JOIN group_items i ON i.group_id = g.id
+         GROUP BY g.id
+         ORDER BY g.updated_at DESC`,
+      )
+      .all();
+    return { groups };
+  });
+
+  app.post<{ Body?: { name?: string } }>('/api/groups', async (req) => {
+    const name = (req.body?.name ?? '').trim() || 'Untitled group';
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    db.prepare('INSERT INTO groups (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
+      id,
+      name,
+      now,
+      now,
+    );
+    return { id, name, count: 0 };
+  });
+
+  /** A group's photos, newest addition first. */
+  app.get<{ Params: { id: string } }>('/api/groups/:id', async (req, reply) => {
+    const group = db.prepare('SELECT id, name, note FROM groups WHERE id = ?').get(req.params.id) as
+      | { id: string; name: string; note: string | null }
+      | undefined;
+    if (!group) return reply.code(404).send({ error: 'not-found' });
+
+    const photos = db
+      .prepare(
+        `SELECT ${SELECT_COLUMNS}
+         FROM group_items gi
+         JOIN photos p ON p.id = gi.photo_id
+         ${JOINS}
+         WHERE gi.group_id = ?
+         ORDER BY gi.added_at DESC`,
+      )
+      .all(req.params.id) as PhotoRow[];
+
+    return { ...group, photos };
+  });
+
+  /** Renames and/or sets the note. Either may be sent on its own. */
+  app.put<{ Params: { id: string }; Body: { name?: string; note?: string | null } }>(
+    '/api/groups/:id',
+    async (req, reply) => {
+      const exists = db.prepare('SELECT 1 FROM groups WHERE id = ?').get(req.params.id);
+      if (!exists) return reply.code(404).send({ error: 'not-found' });
+
+      const now = Date.now();
+      const name = req.body?.name?.trim();
+      if (name) db.prepare('UPDATE groups SET name = ?, updated_at = ? WHERE id = ?').run(name, now, req.params.id);
+
+      // An empty note clears it, so undefined (absent) and '' mean different things.
+      if (req.body?.note !== undefined) {
+        const note = req.body.note?.trim() || null;
+        db.prepare('UPDATE groups SET note = ?, updated_at = ? WHERE id = ?').run(note, now, req.params.id);
+      }
+
+      return db.prepare('SELECT id, name, note FROM groups WHERE id = ?').get(req.params.id);
+    },
+  );
+
+  /**
+   * Adds photos. Additive rather than replace-all: "add to a group" happens a
+   * handful at a time, and two tabs adding at once should not clobber each other.
+   */
+  app.post<{ Params: { id: string }; Body: { ids?: string[] } }>(
+    '/api/groups/:id/items',
+    async (req, reply) => {
+      const exists = db.prepare('SELECT 1 FROM groups WHERE id = ?').get(req.params.id);
+      if (!exists) return reply.code(404).send({ error: 'not-found' });
+
+      const ids = req.body?.ids;
+      if (!Array.isArray(ids) || ids.length === 0) return reply.code(400).send({ error: 'ids-required' });
+
+      const known = db.prepare('SELECT 1 FROM photos WHERE id = ?');
+      const insert = db.prepare(
+        `INSERT INTO group_items (group_id, photo_id, added_at) VALUES (?, ?, ?)
+         ON CONFLICT(group_id, photo_id) DO NOTHING`,
+      );
+      const now = Date.now();
+
+      let added = 0;
+      for (const photoId of new Set(ids)) {
+        if (!known.get(photoId)) continue;
+        added += Number(insert.run(req.params.id, photoId, now).changes);
+      }
+      db.prepare('UPDATE groups SET updated_at = ? WHERE id = ?').run(now, req.params.id);
+
+      return { added };
+    },
+  );
+
+  app.delete<{ Params: { id: string }; Body?: { ids?: string[] } }>(
+    '/api/groups/:id/items',
+    async (req, reply) => {
+      const ids = req.body?.ids;
+      if (!Array.isArray(ids) || ids.length === 0) return reply.code(400).send({ error: 'ids-required' });
+
+      const remove = db.prepare('DELETE FROM group_items WHERE group_id = ? AND photo_id = ?');
+      let removed = 0;
+      for (const photoId of ids) removed += Number(remove.run(req.params.id, photoId).changes);
+      db.prepare('UPDATE groups SET updated_at = ? WHERE id = ?').run(Date.now(), req.params.id);
+
+      return { removed };
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>('/api/groups/:id', async (req) => {
+    db.prepare('DELETE FROM group_items WHERE group_id = ?').run(req.params.id);
+    const result = db.prepare('DELETE FROM groups WHERE id = ?').run(req.params.id);
+    return { removed: Number(result.changes) };
+  });
+
+  /** Saved grids, most recently touched first. */
+  app.get('/api/grids', async () => {
+    const grids = db
+      .prepare(
+        `SELECT g.id, g.name, g.created_at, g.updated_at,
+                COUNT(i.photo_id) AS count,
+                (SELECT photo_id FROM grid_items WHERE grid_id = g.id ORDER BY position ASC LIMIT 1) AS cover
+         FROM grids g
+         LEFT JOIN grid_items i ON i.grid_id = g.id
+         GROUP BY g.id
+         ORDER BY g.updated_at DESC`,
+      )
+      .all();
+    return { grids };
+  });
+
+  app.post<{ Body?: { name?: string } }>('/api/grids', async (req) => {
+    const name = (req.body?.name ?? '').trim() || 'Untitled grid';
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    db.prepare('INSERT INTO grids (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
+      id,
+      name,
+      now,
+      now,
+    );
+    return { id, name, count: 0 };
+  });
+
+  /**
+   * One grid's photos, in posting order.
+   *
+   * Returns full photo rows rather than ids so a grid renders independently of
+   * whatever the gallery is filtered to — a grid is its own thing.
+   */
+  app.get<{ Params: { id: string } }>('/api/grids/:id', async (req, reply) => {
+    const grid = db.prepare('SELECT id, name FROM grids WHERE id = ?').get(req.params.id) as
+      | { id: string; name: string }
+      | undefined;
+    if (!grid) return reply.code(404).send({ error: 'not-found' });
+
+    const photos = db
+      .prepare(
+        `SELECT ${SELECT_COLUMNS}
+         FROM grid_items gi
+         JOIN photos p ON p.id = gi.photo_id
+         ${JOINS}
+         WHERE gi.grid_id = ?
+         ORDER BY gi.position ASC`,
+      )
+      .all(req.params.id) as PhotoRow[];
+
+    return { ...grid, photos };
+  });
+
+  /** Renames and/or replaces the contents. The UI always edits the whole list. */
+  app.put<{ Params: { id: string }; Body: { name?: string; ids?: string[] } }>(
+    '/api/grids/:id',
+    async (req, reply) => {
+      const exists = db.prepare('SELECT 1 FROM grids WHERE id = ?').get(req.params.id);
+      if (!exists) return reply.code(404).send({ error: 'not-found' });
+
+      const now = Date.now();
+      let saved: number | undefined;
+      let dropped: number | undefined;
+
+      if (Array.isArray(req.body?.ids)) {
+        const ids = req.body.ids;
+        const known = db.prepare('SELECT 1 FROM photos WHERE id = ?');
+        // Unknown ids are discarded: a grid pointing at photos that are no longer
+        // indexed would render as silent gaps.
+        const unique = [...new Set(ids.filter((id) => known.get(id)))];
+
+        db.prepare('DELETE FROM grid_items WHERE grid_id = ?').run(req.params.id);
+        const insert = db.prepare('INSERT INTO grid_items (grid_id, photo_id, position) VALUES (?, ?, ?)');
+        unique.forEach((photoId, index) => insert.run(req.params.id, photoId, index));
+
+        saved = unique.length;
+        dropped = ids.length - unique.length;
+      }
+
+      const name = req.body?.name?.trim();
+      if (name) db.prepare('UPDATE grids SET name = ?, updated_at = ? WHERE id = ?').run(name, now, req.params.id);
+      else db.prepare('UPDATE grids SET updated_at = ? WHERE id = ?').run(now, req.params.id);
+
+      return { id: req.params.id, saved, dropped };
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>('/api/grids/:id', async (req) => {
+    db.prepare('DELETE FROM grid_items WHERE grid_id = ?').run(req.params.id);
+    const result = db.prepare('DELETE FROM grids WHERE id = ?').run(req.params.id);
+    return { removed: Number(result.changes) };
+  });
+
   /** Place search for the location picker. Proxied so Nominatim's policy is honoured. */
   app.get<{ Querystring: { q?: string; limit?: string } }>('/api/geocode', async (req, reply) => {
     const q = req.query.q ?? '';
@@ -307,6 +526,22 @@ export function registerRoutes(app: FastifyInstance): void {
       // Upstream being slow or rate-limiting us must not read as "no such place".
       const message = err instanceof Error ? err.message : 'geocode-failed';
       return reply.code(502).send({ error: 'geocode-unavailable', detail: message });
+    }
+  });
+
+  /**
+   * Turns pasted input into a point: bare coordinates, a Google/Apple Maps URL, or
+   * a short link the server expands. Lets the user search wherever they like and
+   * bring the answer back, without this app consuming anyone's search API.
+   */
+  app.post<{ Body?: { input?: string } }>('/api/geocode/resolve', async (req, reply) => {
+    const input = req.body?.input ?? '';
+    if (!input.trim()) return { point: null };
+    try {
+      return { point: await resolvePastedLocation(input) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'resolve-failed';
+      return reply.code(502).send({ error: 'resolve-failed', detail: message });
     }
   });
 

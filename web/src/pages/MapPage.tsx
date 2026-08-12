@@ -8,17 +8,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type Photo, thumbUrl } from '../api.ts';
 import GeoAssignPanel from '../components/GeoAssignPanel.tsx';
 import Lightbox from '../components/Lightbox.tsx';
+import { TILE_ATTRIBUTION, TILE_URLS } from '../lib/basemap.ts';
 import { formatCount, formatDay } from '../lib/format.ts';
 import { useTheme } from '../lib/useTheme.ts';
 import { useStore } from '../store.ts';
-
-// Free raster basemap, per theme. This is the only place to change it.
-const TILE_URLS = {
-  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-} as const;
-const TILE_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 export default function MapPage() {
   const filters = useStore((s) => s.filters);

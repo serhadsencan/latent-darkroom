@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDown,
   ArrowUp,
+  Layers,
   LayoutGrid,
+  MapPin,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -11,11 +13,15 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { api, type Filters, type Photo } from '../api.ts';
 import { formatCount } from '../lib/format.ts';
 import { useStore } from '../store.ts';
 import TrashDialog from './TrashDialog.tsx';
+
+// Pulls in Leaflet; keep it out of the gallery bundle until the dialog is opened.
+const LocationPickerDialog = lazy(() => import('./LocationPickerDialog.tsx'));
+const AddToGroupDialog = lazy(() => import('./AddToGroupDialog.tsx'));
 
 const SORT_LABELS: Record<NonNullable<Filters['sort']>, string> = {
   taken: 'Date taken',
@@ -205,6 +211,8 @@ function SelectionControls({ photos }: { photos: Photo[] }) {
   const selectAll = useStore((s) => s.selectAll);
   const clearSelection = useStore((s) => s.clearSelection);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [locationOpen, setLocationOpen] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
 
   const selectedIds = [...selection];
   // The selection may span other filters; only loaded photos can be previewed.
@@ -238,6 +246,26 @@ function SelectionControls({ photos }: { photos: Photo[] }) {
                   <X size={14} />
                 </button>
               </div>
+              <div className="tooltip tooltip-bottom" data-tip="Add selected to a group">
+                <button
+                  onClick={() => setGroupOpen(true)}
+                  aria-label="Add selected to a group"
+                  className="btn btn-square btn-xs btn-ghost"
+                >
+                  <Layers size={14} />
+                </button>
+              </div>
+
+              <div className="tooltip tooltip-bottom" data-tip="Set location for selected">
+                <button
+                  onClick={() => setLocationOpen(true)}
+                  aria-label="Set location for selected"
+                  className="btn btn-square btn-xs btn-ghost"
+                >
+                  <MapPin size={14} />
+                </button>
+              </div>
+
               <div className="tooltip tooltip-bottom" data-tip="Move selected to Trash">
                 <button
                   onClick={() => setTrashOpen(true)}
@@ -259,6 +287,28 @@ function SelectionControls({ photos }: { photos: Photo[] }) {
           onClose={() => setTrashOpen(false)}
           onDone={clearSelection}
         />
+      )}
+
+      {groupOpen && (
+        <Suspense fallback={null}>
+          <AddToGroupDialog
+            ids={selectedIds}
+            preview={selectedPhotos}
+            onClose={() => setGroupOpen(false)}
+            onDone={clearSelection}
+          />
+        </Suspense>
+      )}
+
+      {locationOpen && (
+        <Suspense fallback={null}>
+          <LocationPickerDialog
+            ids={selectedIds}
+            preview={selectedPhotos}
+            onClose={() => setLocationOpen(false)}
+            onDone={clearSelection}
+          />
+        </Suspense>
       )}
     </div>
   );

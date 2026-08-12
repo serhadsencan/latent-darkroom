@@ -1,203 +1,97 @@
 # latent darkroom
 
-A multi-page, browser-based viewer for a local photo library. It scans folders on
-disk, generates thumbnails and reads EXIF.
+A local photo library that runs in your browser. Points at folders on disk, never
+copies anything, and gets out of the way.
 
-The full-size JPEG embedded in Fuji RAF files is extracted directly, so RAW frames
-appear instantly and already carry the camera's film simulation — no RAW decode.
+Four pages: a **gallery** (justified grid, virtualised, facet filters), a **map** of
+everything with GPS, a **grid** that lays your shots out as an Instagram profile
+before you post them, and **groups** — named collections with notes.
 
-## Pages
+Two things worth knowing about the Fuji handling: RAF files render instantly because
+the full-size JPEG the camera already embedded is pulled straight out — no RAW
+decode — and the film simulation is read from the MakerNote by hand, since no
+off-the-shelf parser decodes Fuji's tables.
 
-| Page | Route | What it does |
-|---|---|---|
-| Gallery | `/` | Justified, virtualised grid; folder/year/body/lens/film-sim facets, search, rating |
-| Map | `/map` | Shows photos with GPS EXIF as clusters |
-
-Filters are shared between the two: pick a folder in the gallery and the map shows
-that folder as well.
-
-### Assigning locations
-
-Most Fuji bodies do not record location, and phone pairing can drop out mid-trip.
-The **assign location** button on the map offers two ways to fix that:
-
-- **Pick frames individually** — turn on **selection** in the gallery and click
-  frames (shift for a range, "select listed" for the whole filter). The selection
-  carries across pages: switch to the map, click a point, and only your picks are
-  updated. The sidebar's **Location → Unlocated** filter lists exactly the frames
-  that need one.
-- **A whole folder** — choose a folder (or everything unlocated) as the target,
-  click a point on the map, and every unlocated frame in it is updated.
-- **Derive from time** — estimates an unlocated frame from the nearest located
-  frames in time. Between two anchors it interpolates by timestamp; with one, it
-  reuses that anchor. A wider gap covers more frames but is less accurate — use
-  **preview** to see how many would be affected before writing anything.
-
-Assignments live in the `user_geo` table — **photo files are never touched**.
-Rescanning does not clear them, and the undo section reverses everything. On the
-map the pin border shows the source: plain for EXIF, blue for manual, dashed blue
-for time-derived.
-
-## Setup
+## Run it
 
 ```bash
 npm install
-cp .env.example .env
-```
-
-Set `PHOTO_ROOTS` in `.env` to your photo folder. Separate multiple folders with
-`:` (not a comma, because macOS paths routinely contain spaces):
-
-```
-PHOTO_ROOTS=/Users/you/Pictures/Lightroom Saved Photos:/Volumes/SSD/Fujifilm
-```
-
-Then run the first scan:
-
-```bash
+cp .env.example .env      # set PHOTO_ROOTS to your photo folder
 npm run scan
-```
-
-## Running
-
-```bash
 npm run dev
 ```
 
-The UI opens at http://localhost:5173 and the API at http://127.0.0.1:5174. The API
-binds to `127.0.0.1` only — nothing else on the network can reach it.
-
-Rescans can also be triggered from the refresh button in the UI. Scanning is
-incremental: files whose size and mtime are unchanged are never touched. To rebuild
-the index from scratch, run `npm run scan -- --force`.
-
-## Interface
-
-**daisyUI 5** (on Tailwind v4) with **lucide-react** icons. Buttons are icons plus
-tooltips; text is used only where an icon would not carry the meaning.
-
-Colours go through daisyUI's semantic tokens — `base-100` background, `base-200`
-panels, `base-300` borders, `base-content` text, `primary` amber accent. No raw
-colours in components, so retheming happens in one place.
-
-## Theme
-
-The **theme** button on the rail cycles dark → light → system; the choice is stored
-in `localStorage` (`ld:theme`). With "system" selected the OS preference is followed
-live.
-
-Both themes are `@plugin 'daisyui/theme'` blocks in `index.css`, deliberately named
-`dark` and `light` — `useTheme` writes those values straight onto `<html data-theme>`.
-Adding a theme means adding one more block.
-
-Two deliberate exceptions:
-
-- **The lightbox stays dark in every theme** (via `data-theme="dark"`). Judging
-  colour and exposure against a white surround is misleading.
-- **The basemap follows the theme** — CARTO `dark_all` / `light_all`.
-
-The theme is applied by a small script in `index.html` before React mounts, to avoid
-a flash of the wrong colours.
-
-## Logo
-
-The emblem and favicon are generated from the source banner:
-
-```bash
-npm run logo Gemini_Generated_Image_961ap6961ap6961a.png -- --cx 0.4904 --cy 0.3763 --r 0.118
-```
-
-Those values were measured for the current banner. If the source image changes,
-retune `--cx/--cy/--r` (the emblem's centre and radius as fractions of the image).
-Output lands in `web/public/` and `LogoMark` reads it from there; if the file is
-missing the UI quietly falls back to a text mark.
-
-## Deleting
-
-The **delete** button in the lightbox (or `Delete`) and the one in selection mode
-move files to the **macOS Trash** via Finder, then drop them from the index and the
-thumbnail cache. Finder is used rather than a plain move because only Finder records
-the metadata that **Put Back** needs, which keeps the operation fully reversible.
-Nothing is permanently deleted until you empty the Trash.
-
-Deletion always goes through a confirmation dialog and only ever accepts an explicit
-list of ids — deleting by filter is not supported, because one wrong filter would
-send hundreds of frames away in a single click.
+UI on :5173, API on :5174 (bound to localhost only).
 
 ## Shortcuts
 
-| Key | Action |
+| Key | |
 |---|---|
-| `/` | Focus the search box |
-| `←` `→` | Move through the lightbox |
-| `0`–`5` | Rate (`0` clears) |
-| `i` | Toggle the info panel |
-| `Delete` | Move to Trash (asks first) |
-| `esc` | Close the lightbox |
+| `/` | search |
+| `←` `→` | move through the lightbox |
+| `0`–`5` | rate |
+| `i` | info panel |
+| `Delete` | move to Trash (asks first) |
+| `esc` | close |
 
-## Architecture
+## Things you should know
 
-```
-server/            Fastify API — filesystem, index, thumbnails
-  src/config.ts    .env loading, roots, cache paths
-  src/db.ts        node:sqlite schema (built in — no native dependency)
-  src/indexer.ts   folder walk, EXIF extraction, incremental upsert
-  src/raw.ts       RAF embedded-JPEG extractor + generic RAW preview
-  src/fuji.ts      Fuji MakerNote → film simulation
-  src/geo.ts       time-based location interpolation
-  src/trash.ts     move to the macOS Trash via Finder
-  src/thumbs.ts    sharp thumbnails with a disk cache
-  src/routes.ts    HTTP endpoints
-web/               Vite + React + Tailwind + daisyUI + react-router
-  src/pages.tsx          page registry — route and rail button in one place
-  src/pages/GalleryPage.tsx
-  src/pages/MapPage.tsx  Leaflet (lazy-loaded)
-  src/lib/justified.ts   row-based justified layout maths
-  src/components/PhotoGrid.tsx  virtualised grid
-```
+**Your files are never modified.** Ratings and assigned locations live in the app's
+own SQLite tables, so a rescan can't wipe them and a wrong assignment is one click
+to undo.
 
-**Adding a page:** write the component under `src/pages/`, add one line to the
-`PAGES` array in `src/pages.tsx`. Route, rail button and lazy loading follow.
+**Delete means the macOS Trash**, via Finder so "Put Back" works. Nothing is gone
+until you empty it.
 
-### Decisions
+**Two things leave your machine**: map tiles (CARTO) and whatever you type into
+place search (Nominatim). Not your photos — but the geography you look at and the
+words you search. Both are one file each to swap: `web/src/lib/basemap.ts` and
+`server/src/geocode.ts`.
 
-- **node:sqlite** instead of `better-sqlite3`. No native build, so a Node upgrade
-  never leaves `node_modules` needing a rebuild.
-- **Thumbnails on disk** — fixed `320 / 640 / 1280 / 2560` px buckets under
-  `.cache/thumbs/<size>/<first 2 chars of id>/<id>.jpg`. The original never reaches
-  the browser (except on download). Deleting the cache is safe; it regenerates.
-- **Ratings and locations in separate tables** (`user_meta`, `user_geo`) so a
-  rescan never destroys them.
-- **Virtualisation** — the only thing keeping the DOM alive at 10k+ photos. Rows are
-  virtualised, and because aspect ratios come from the index the layout never waits
-  on measurement.
-- **Map lazy-loaded** — Leaflet + markercluster is ~190 kB, split into its own chunk
-  so it only downloads when the map page opens.
+**Missing locations can be filled two ways** — select frames and pick a place, or
+derive them from timestamps when a neighbouring frame has GPS. Preview before
+writing; the map shows where each location came from (solid border = EXIF, blue =
+you, dashed = derived).
 
-### Map and privacy
+**The grid page is a planning tool, not an uploader.** Pick frames from the whole
+library on the left, drag tiles to set the order you'll post in, click ✕ to drop one.
+Three columns filling newest-first, like the real profile. Toggle between 4:5 and 1:1
+(Instagram changed the profile thumbnail shape in 2025 and the rollout was uneven, so
+both are there), and toggle the crop off to see exactly which edges get eaten.
 
-The basemap is CARTO's free raster layer (`TILE_URL` in `MapPage.tsx`). That means
-**tile requests for the regions your photos are in go to CARTO** — not the photos
-themselves, but the geography you look at. If that bothers you, point `TILE_URL` at
-your own tile server or a local MBTiles source; it is one line.
+Grids are **saved and named**, so you can keep one per trip and switch between them.
+They live in the database, not the browser.
 
-### Known limits
+**Groups are the looser cousin** — a named collection with a note, for anything a
+grid's posting order doesn't suit ("to print", "portfolio", "send to Ayşe"). The
+search box drives the page: leave it empty to see the group, type to search the whole
+library and click to add.
 
-- For RAW formats other than RAF (DNG, NEF, CR3…) only the small EXIF preview is
-  attempted; there is no full RAW decode. Files without one show "no preview".
-- Facet counts are computed over the whole library and do not narrow with the
-  active filter.
-- The filesystem is not watched — new photos need a rescan.
-- Only files with GPS (from EXIF or assigned) appear on the map.
+Photos also reach a group straight from the gallery: turn on selection, pick frames,
+then hit the layers button next to delete. Adding to a brand-new group is one step —
+name it in the dialog and it is created and filled together.
 
-### Responsive behaviour
+The page is deliberately cut off from the gallery's filters — a grid is planned
+across everything, so the picker has its own search.
 
-The shell is a fixed viewport — only inner panes scroll, the page never scrolls
-sideways. The sidebar has a toggle in the top bar and collapses automatically below
-900px (one-way: widening again does not reopen it, so a deliberate choice is not
-overridden).
+**The place box takes three kinds of input**: type to search, paste coordinates, or
+paste a Google Maps link. If Google finds it faster, search there and bring the link
+back — pulling Google's search results into an OSM map programmatically would break
+their terms, but carrying one answer across by hand is exactly what the paste is for.
 
-Top-bar controls hide progressively via **container queries**, not viewport
-breakpoints, because the sidebar can take 240px away without the viewport changing
-at all. In order of sacrifice: density slider, then sort + direction, then the photo
-count.
+## Poking at it
+
+- Adding a page: drop a component in `src/pages/`, add a line to `PAGES` in
+  `src/pages.tsx`. Route, nav button and lazy loading follow.
+- Regenerating the logo: `npm run logo <source.png>` (crop values are in the script).
+- Rebuilding the index from scratch: `npm run scan -- --force`.
+
+The interesting decisions are documented where they apply — why the thumbnail cache
+is shaped the way it is, why Leaflet's CSS needs longer selectors than it should,
+why the lightbox stays dark in light mode. Follow the comments.
+
+## Rough edges
+
+- Only RAF gets a real preview; other RAW formats fall back to the EXIF thumbnail.
+- Facet counts are library-wide, they don't narrow with the active filter.
+- No filesystem watching — new photos need a rescan.

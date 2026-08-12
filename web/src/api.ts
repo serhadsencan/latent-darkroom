@@ -140,8 +140,117 @@ export const api = {
     }),
 };
 
+export type GroupSummary = {
+  id: string;
+  name: string;
+  note: string | null;
+  count: number;
+  cover: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+/**
+ * Groups are general-purpose collections. Unlike a grid, membership is the point,
+ * not order — so items are added and removed rather than the list being replaced.
+ */
+export const groups = {
+  list: async () => (await json<{ groups: GroupSummary[] }>('/api/groups')).groups,
+
+  create: (name?: string) =>
+    json<{ id: string; name: string }>('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+
+  get: (id: string) => json<{ id: string; name: string; note: string | null; photos: Photo[] }>(`/api/groups/${id}`),
+
+  /** Rename and/or set the note. Sending only one leaves the other alone. */
+  update: (id: string, body: { name?: string; note?: string | null }) =>
+    json<{ id: string; name: string; note: string | null }>(`/api/groups/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+  addItems: (id: string, ids: string[]) =>
+    json<{ added: number }>(`/api/groups/${id}/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+
+  removeItems: (id: string, ids: string[]) =>
+    json<{ removed: number }>(`/api/groups/${id}/items`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+
+  remove: (id: string) => json<{ removed: number }>(`/api/groups/${id}`, { method: 'DELETE' }),
+};
+
+export type GridSummary = {
+  id: string;
+  name: string;
+  count: number;
+  cover: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+/**
+ * Saved Instagram grids. Contents come back as full photo rows, so a grid renders
+ * independently of whatever the gallery is filtered to.
+ */
+export const grids = {
+  list: async () => (await json<{ grids: GridSummary[] }>('/api/grids')).grids,
+
+  create: (name?: string) =>
+    json<{ id: string; name: string }>('/api/grids', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+
+  get: (id: string) => json<{ id: string; name: string; photos: Photo[] }>(`/api/grids/${id}`),
+
+  update: (id: string, body: { name?: string; ids?: string[] }) =>
+    json<{ id: string; saved?: number; dropped?: number }>(`/api/grids/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+  remove: (id: string) => json<{ removed: number }>(`/api/grids/${id}`, { method: 'DELETE' }),
+};
+
+export type Place = {
+  label: string;
+  name: string;
+  lat: number;
+  lon: number;
+  /** [south, north, west, east] — lets a city zoom differently than a cafe. */
+  bbox: [number, number, number, number] | null;
+};
+
 export const geo = {
   missing: () => json<MissingGeo>('/api/geo/missing'),
+
+  /** Place search, proxied through our server so Nominatim's policy is honoured. */
+  searchPlaces: async (q: string, limit = 8) =>
+    (await json<{ places: Place[] }>(`/api/geocode?q=${encodeURIComponent(q)}&limit=${limit}`)).places,
+
+  /** Coordinates or a map link pasted from elsewhere (Google Maps, Apple Maps…). */
+  resolvePasted: async (input: string) =>
+    (
+      await json<{ point: { lat: number; lon: number; label: string } | null }>('/api/geocode/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input }),
+      })
+    ).point,
 
   set: (id: string, lat: number | null, lon: number | null) =>
     json<unknown>(`/api/photos/${id}/geo`, {

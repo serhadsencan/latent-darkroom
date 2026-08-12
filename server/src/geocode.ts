@@ -92,6 +92,90 @@ function toPlace(raw: NominatimResult): Place | null {
   return { label, name, lat, lon, bbox };
 }
 
+export type ResolvedPoint = { lat: number; lon: number; label: string };
+
+function point(lat: number, lon: number, label: string): ResolvedPoint | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon, label };
+}
+
+/** Bare "41.0082, 28.9784" — what Google Maps' "Copy coordinates" puts on the clipboard. */
+function parseBareCoords(input: string): ResolvedPoint | null {
+  const match = input.trim().match(/^(-?\d{1,3}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  if (!match) return null;
+  return point(Number(match[1]), Number(match[2]), 'Pasted coordinates');
+}
+
+/**
+ * Pulls a coordinate out of a map URL.
+ *
+ * Google encodes two different points: `!3d<lat>!4d<lon>` is the place itself,
+ * `@<lat>,<lon>` is only where the viewport happened to sit. Prefer the former.
+ */
+function parseMapUrl(input: string): ResolvedPoint | null {
+  const place = input.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+  if (place) return point(Number(place[1]), Number(place[2]), 'Pasted link');
+
+  const query = input.match(/[?&](?:q|query|ll|daddr|center)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if (query) return point(Number(query[1]), Number(query[2]), 'Pasted link');
+
+  const viewport = input.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if (viewport) return point(Number(viewport[1]), Number(viewport[2]), 'Pasted link (map centre)');
+
+  return null;
+}
+
+/**
+ * Short links (maps.app.goo.gl/…) carry no coordinates until they are followed, and
+ * the browser cannot read a cross-origin redirect — so the server expands them.
+ *
+ * The host allow-list is the security boundary: without it this endpoint would
+ * fetch any URL a caller supplies, straight into the machine's network.
+ */
+const LINK_HOSTS = new Set(['maps.app.goo.gl', 'goo.gl', 'maps.google.com', 'www.google.com', 'g.co']);
+
+async function expandShortLink(input: string): Promise<ResolvedPoint | null> {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || !LINK_HOSTS.has(url.hostname)) return null;
+
+  const response = await schedule(() =>
+    fetch(url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }),
+  );
+
+  // The expanded URL usually carries the coordinates; some variants only have
+  // them in the body, so fall back to scanning the HTML.
+  return parseMapUrl(response.url) ?? parseMapUrl((await response.text()).slice(0, 200_000));
+}
+
+/**
+ * Turns pasted input into a point: bare coordinates, a full map URL, or a short
+ * link that has to be expanded first. Returns null when it is just search text.
+ */
+export async function resolvePastedLocation(input: string): Promise<ResolvedPoint | null> {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const bare = parseBareCoords(trimmed);
+  if (bare) return bare;
+
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+
+  const direct = parseMapUrl(trimmed);
+  if (direct) return direct;
+
+  return expandShortLink(trimmed);
+}
+
 export async function searchPlaces(query: string, limit = 8): Promise<Place[]> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];

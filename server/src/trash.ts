@@ -119,11 +119,16 @@ export async function trashPhotos(ids: string[]): Promise<TrashResult> {
   const deletePhoto = db.prepare('DELETE FROM photos WHERE id = ?');
   const deleteMeta = db.prepare('DELETE FROM user_meta WHERE id = ?');
   const deleteGeo = db.prepare('DELETE FROM user_geo WHERE id = ?');
+  // A trashed frame must leave grids and groups too, or it lingers as a gap.
+  const deletePlan = db.prepare('DELETE FROM grid_items WHERE photo_id = ?');
+  const deleteGroup = db.prepare('DELETE FROM group_items WHERE photo_id = ?');
 
   for (const item of movable) {
     deletePhoto.run(item.id);
     deleteMeta.run(item.id);
     deleteGeo.run(item.id);
+    deletePlan.run(item.id);
+    deleteGroup.run(item.id);
     await removeThumbs(item.id);
     result.trashed.push(item.id);
   }
